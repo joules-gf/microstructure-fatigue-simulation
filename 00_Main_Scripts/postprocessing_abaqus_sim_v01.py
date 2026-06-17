@@ -41,7 +41,8 @@ def load_csv(file_path, strain_col=0, stress_col=1):
     return strain_vals, stress_vals
 
 def compute_area(strain, stress):
-    return np.trapezoid(stress, strain)
+    trapezoid = getattr(np, "trapezoid", np.trapz)
+    return trapezoid(stress, strain)
 
 def plot_simulation_against_rom(reference_csv, results_file, show_area=True, show_plot=True, save_fig=True):
     # Load AA7075-T6 reference (stress in col 1, strain in col 0)
