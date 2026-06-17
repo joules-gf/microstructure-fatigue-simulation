@@ -12,6 +12,7 @@ import platform
 import shutil
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -125,26 +126,86 @@ def _cmd_quote(value: str) -> str:
     return '"' + value.replace('"', '\\"') + '"'
 
 
+def _windows_stage_root() -> Path:
+    # Return a Windows-backed staging root visible to Windows Abaqus.
+    candidates = (
+        Path("/mnt/c/Users/Public/microstructure_fatigue_simulation_abaqus"),
+        Path("/mnt/c/Windows/Temp/microstructure_fatigue_simulation_abaqus"),
+    )
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        return candidate
+    return Path(tempfile.mkdtemp(prefix="microstructure_fatigue_simulation_abaqus_"))
+
+
+def _copy_tree_contents(src: Path, dst: Path) -> None:
+    # Copy all files/directories from src into dst, preserving new outputs.
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+
+def _cmd_arg(value: str) -> str:
+    # Quote a cmd.exe argument only when needed.
+    if any(char in value for char in " \t&()[]{}^=;!'+,`~"):
+        return _cmd_quote(value)
+    return value
+
+
 def run_cmd_abaqus_in_wsl_directory(
     abaqus_args: Sequence[str],
     cwd: str | os.PathLike[str],
+    script_path: str | os.PathLike[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    r"""Run Windows Abaqus from WSL while using a WSL output directory.
+    r"""Run Windows Abaqus for a WSL-generated case.
 
-    ``cmd.exe`` cannot use a ``\\wsl.localhost\...`` UNC path as its initial
-    working directory.  ``pushd`` can temporarily map that UNC path to a Windows
-    drive letter, so Abaqus sees a normal working directory and can find the
-    generated ``.inp`` file by job name.
+    Some WSL installations expose paths like ``\\wsl.localhost\\Ubuntu`` via
+    ``wslpath -w`` but Windows ``cmd.exe`` cannot actually access those UNC paths
+    from a WSL-launched process (``The specified path is invalid``).  To avoid
+    UNC fragility, stage the whole simulation case on ``C:`` before launching
+    Abaqus, then copy generated results back into the WSL output directory.
     """
-    win_cwd = wsl_to_windows_path(cwd)
-    command_text = "pushd " + _cmd_quote(win_cwd) + " && abaqus " + " ".join(abaqus_args) + " && popd"
-    command = ["cmd.exe", "/C", command_text]
-    safe_cwd = _windows_safe_cwd()
+    workdir = Path(cwd).resolve()
+    source_case_dir = workdir.parent
+    relative_workdir = workdir.relative_to(source_case_dir)
+
+    stage_case_dir = _windows_stage_root() / source_case_dir.name
+    if stage_case_dir.exists():
+        shutil.rmtree(stage_case_dir)
+    shutil.copytree(source_case_dir, stage_case_dir)
+    stage_workdir = stage_case_dir / relative_workdir
+
+    staged_args = list(abaqus_args)
+    if script_path is not None:
+        script = Path(script_path).resolve()
+        staged_script_dir = stage_case_dir / "_abaqus_scripts"
+        staged_script_dir.mkdir(parents=True, exist_ok=True)
+        staged_script = staged_script_dir / script.name
+        shutil.copy2(script, staged_script)
+        staged_script_arg = wsl_to_windows_path(staged_script)
+        staged_args = [
+            f"noGUI={staged_script_arg}" if str(arg).startswith("noGUI=") else str(arg)
+            for arg in staged_args
+        ]
+
+    cmd_exe = find_windows_cmd_exe() or "cmd.exe"
+    command_text = "abaqus " + " ".join(_cmd_arg(str(arg)) for arg in staged_args)
+    command = [cmd_exe, "/C", command_text]
+
     print("Running:", " ".join(command))
     print("Working directory:", cwd)
-    if safe_cwd:
-        print("cmd.exe launch directory:", safe_cwd)
-    return subprocess.run(command, cwd=safe_cwd, check=True, text=True)
+    print("Windows staging directory:", stage_workdir)
+    try:
+        return subprocess.run(command, cwd=str(stage_workdir), check=True, text=True)
+    finally:
+        _copy_tree_contents(stage_case_dir, source_case_dir)
 
 
 def run_abaqus_job(abaqus_simulation_directory: str | os.PathLike[str], simulation_name: str) -> None:
@@ -165,13 +226,10 @@ def run_abaqus_cae_no_gui(
     workdir = Path(abaqus_output_directory).resolve()
     script = Path(script_path).resolve()
 
-    if is_wsl() and find_windows_cmd_exe() and not shutil.which("abaqus"):
-        script_arg = wsl_to_windows_path(script)
-    else:
-        script_arg = str(script)
+    script_arg = str(script)
 
     command = find_abaqus_command() + ["cae", f"noGUI={script_arg}"]
     if is_wsl() and _is_cmd_abaqus_bridge(command):
-        run_cmd_abaqus_in_wsl_directory(["cae", f"noGUI={script_arg}"], workdir)
+        run_cmd_abaqus_in_wsl_directory(["cae", f"noGUI={script_arg}"], workdir, script_path=script)
         return
     run_command(command, workdir)
