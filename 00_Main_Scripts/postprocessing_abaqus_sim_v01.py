@@ -3,10 +3,10 @@ import csv
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from wsl_windows_compat import run_abaqus_cae_no_gui
 
 # Get Force vs Displacement from ODB
 def extract_force_displacement(abaqus_output_directory, simulation_name):
-    os.chdir(abaqus_output_directory)
     os.environ.update(
         {
             "ODB_FILE": simulation_name,
@@ -14,7 +14,8 @@ def extract_force_displacement(abaqus_output_directory, simulation_name):
             "UPPERNODES": "UPPERNODES",
         }
     )
-    os.system("abaqus cae noGUI=..\\..\\..\\00_Main_Scripts\\getForceDisp.py")
+    get_force_disp_script = os.path.join(os.path.dirname(__file__), "getForceDisp.py")
+    run_abaqus_cae_no_gui(abaqus_output_directory, get_force_disp_script)
 
     # Check if the csv file was written
     csv_path = os.path.join(os.path.dirname(abaqus_output_directory), simulation_name + ".csv")
