@@ -141,15 +141,30 @@ def _windows_stage_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="microstructure_fatigue_simulation_abaqus_"))
 
 
+def _copy_one_file(src: Path, dst: Path) -> None:
+    # Copy through the system cp command when available.  On WSL, Python
+    # shutil.copy2 can use kernel fast-copy paths that fail with Errno 12
+    # for large files copied from /mnt/c into the Linux filesystem.  GNU cp
+    # streams the same files with very low memory use.
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cp_command = shutil.which("cp")
+    if cp_command:
+        subprocess.run([cp_command, "-p", str(src), str(dst)], check=True)
+        return
+    shutil.copy2(src, dst)
+
+
 def _copy_tree_contents(src: Path, dst: Path) -> None:
     # Copy all files/directories from src into dst, preserving new outputs.
+    # Walk recursively instead of using shutil.copytree so one large ODB file
+    # is copied through _copy_one_file rather than Python's bulk tree copier.
     dst.mkdir(parents=True, exist_ok=True)
     for item in src.iterdir():
         target = dst / item.name
         if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
+            _copy_tree_contents(item, target)
         else:
-            shutil.copy2(item, target)
+            _copy_one_file(item, target)
 
 
 def _cmd_arg(value: str) -> str:
@@ -183,7 +198,7 @@ def run_cmd_abaqus_in_wsl_directory(
     stage_case_dir = _windows_stage_root() / source_case_dir.name
     if stage_case_dir.exists():
         shutil.rmtree(stage_case_dir)
-    shutil.copytree(source_case_dir, stage_case_dir)
+    _copy_tree_contents(source_case_dir, stage_case_dir)
     stage_workdir = stage_case_dir / relative_workdir
 
     staged_args = list(abaqus_args)

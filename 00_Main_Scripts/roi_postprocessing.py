@@ -159,5 +159,6 @@ def write_roi_summary_csv(roi_reports_folder: str | Path, output_csv: str | Path
     if output_csv is None:
         output_csv = folder / "roi_summary.csv"
     output_path = Path(output_csv)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     summarize_roi_folder(folder).to_csv(output_path, index=False)
     return output_path
