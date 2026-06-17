@@ -49,11 +49,15 @@ outputs/
 results/
 runs/
 
-# Generated plots / explanatory images (not versioned initially)
+# Generated plots / explanatory images
+# Most generated images stay untracked, but keep the explanatory/reference
+# figures in 01_Secondary_Scripts because they document the analysis.
 *.png
 *.jpg
 *.jpeg
 *.svg
+!01_Secondary_Scripts/rom_outputs/*.png
+!01_Secondary_Scripts/fatigue_figures/*.png
 
 # Temporary/local files
 *.tmp
