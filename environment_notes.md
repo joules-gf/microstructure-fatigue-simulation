@@ -53,6 +53,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+MicroStructPy imports Gmsh, which may need an extra native WSL package:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libglu1-mesa
+```
+
+Check the environment before running a case:
+
+```bash
+python 00_Main_Scripts/check_wsl_environment.py
+```
+
+WSL/headless generate-only run:
+
+```bash
+MPLBACKEND=Agg MICROSTRUCTURE_NONINTERACTIVE=1 \
+python 00_Main_Scripts/full_simulation_runner.py \
+  --input-file simulation_inputs/AL7075-T6/baseline_parameters.xml \
+  --generate-only
+```
+
 ## Python dependencies
 
 Install regular Python dependencies with:
@@ -118,6 +140,41 @@ That script calls:
 1. `abaqus_input_generation_v02.generate_input(...)`
 2. `run_abaqus_sim.run_simulation(...)`
 3. `postprocessing_abaqus_sim_v01.post_processing(...)`
+
+Useful options:
+
+```bash
+# Avoid GUI file selection and run a specific XML case
+python 00_Main_Scripts/full_simulation_runner.py \
+  --input-file simulation_inputs/AL7075-T6/baseline_parameters.xml
+
+# Generate the Abaqus .inp file only; do not launch Abaqus
+python 00_Main_Scripts/full_simulation_runner.py \
+  --input-file simulation_inputs/AL7075-T6/baseline_parameters.xml \
+  --generate-only
+
+# Run Abaqus but skip .odb postprocessing
+python 00_Main_Scripts/full_simulation_runner.py \
+  --input-file simulation_inputs/AL7075-T6/baseline_parameters.xml \
+  --skip-postprocessing
+```
+
+## WSL-to-Windows Abaqus bridge
+
+`00_Main_Scripts/wsl_windows_compat.py` centralizes OS detection and Abaqus launching.
+
+Behavior:
+
+1. If `MICROSTRUCTURE_ABAQUS_CMD` is set, use that command.
+2. Else, if `abaqus` is available in the current PATH, use it directly.
+3. Else, if running in WSL and `cmd.exe` is visible, try `cmd.exe /C abaqus`.
+4. Else, stop after input generation and report where the generated `.inp` file is located.
+
+You can override the Abaqus launcher, for example:
+
+```bash
+export MICROSTRUCTURE_ABAQUS_CMD="cmd.exe /C abaqus"
+```
 
 ## Recommended near-term improvements
 

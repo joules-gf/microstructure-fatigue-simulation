@@ -5,14 +5,30 @@
 ## Warning #3: The code was built around handling multiple phases. In earlier development, I stumbled with an error while trying to run a single phase. Code structure changed but the error was never directly addressed. Thus, running two phases at least will make the code work just fine.
 
 # Importing necessary modules
-import tkinter as tk
-from tkinter import filedialog
-import microstructpy as msp
+# Tkinter and MicroStructPy are imported lazily so headless WSL/Linux
+# environments can inspect CLI options and diagnostics even when GUI/native
+# mesh dependencies are not installed yet.
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import tempfile
 import os
 import shutil
+from wsl_windows_compat import noninteractive_enabled
+
+
+def get_microstructpy():
+    """Import MicroStructPy only when mesh generation is actually needed."""
+    try:
+        import microstructpy as msp
+    except OSError as exc:
+        if "libGLU" in str(exc):
+            raise RuntimeError(
+                "MicroStructPy/Gmsh could not load libGLU.so.1. In WSL/Ubuntu, "
+                "install it with: sudo apt-get update && sudo apt-get install -y libglu1-mesa"
+            ) from exc
+        raise
+    return msp
+
 
 def select_input_file(initial_dir):
     """
@@ -28,6 +44,9 @@ def select_input_file(initial_dir):
     str or None
         Full path of the selected file, or None if user cancels.
     """
+
+    import tkinter as tk
+    from tkinter import filedialog
 
     # Initialize root (hidden)
     root = tk.Tk()
@@ -193,6 +212,8 @@ def write_periodic_amplitude(
 
 def complete_input_data(input_file):
 
+    msp = get_microstructpy()
+
     # Start by ensuring all <include> tags are included/appended, even the one's not read by msp (ie. the <abaqus> tag)
     expanded = expand_all_includes(input_file)
     # Convert input data from XML file to a dictionary of strings. It will be later used to assign the size (from a scipy normal distribution), if it doesn't exist
@@ -270,6 +291,14 @@ def complete_input_data(input_file):
                 ax.set_ylabel('Amplitude')
                 ax.grid(True)
                 fig.tight_layout()
+                if noninteractive_enabled():
+                    simulation_name = os.path.splitext(os.path.basename(input_file))[0]
+                    ax.set_title(f'Simulation {simulation_name}, expected output ({frequency_hz} hz, t_inc = {time_increment_s} s)')
+                    fig.savefig(f'expected_cycles_{simulation_name}.png')
+                    ec_dir = os.getcwd()
+                    plt.close(fig)
+                    return ec_dir
+
                 plt.show()
 
                 continue_run= ask_continue_or_quit()
@@ -780,13 +809,20 @@ def abaqus_input_file_completion(mesh_file, abaqus, phases, plastic_stresses):
 
 
 
-def generate_input(input_files_folder):
+def generate_input(input_files_folder, input_file=None):
     # If 'input_files_folder' is empty it automatically opens in the location of this script
-    if not input_files_folder.strip():
+    if not str(input_files_folder).strip():
         input_files_folder = Path(__file__).resolve()
 
-    # Start by selecting the input file
-    input_file_path = select_input_file(input_files_folder)
+    # Start by selecting the input file. A direct input_file argument avoids GUI
+    # file pickers, which is important for WSL/headless runs.
+    if input_file is not None:
+        input_file_path = str(Path(input_file).expanduser().resolve())
+    else:
+        input_file_path = select_input_file(input_files_folder)
+
+    if input_file_path is None:
+        raise ValueError("No XML input file selected.")
 
     # The information provided in the input file (currently) isn't enough to run the simulation, so we fill the gaps
     complete_input, simulation_name, simulation_output_directory, mesh_output_directory, ec_dir = complete_input_data(input_file_path)
@@ -796,6 +832,7 @@ def generate_input(input_files_folder):
 
     # Run the microstructpy CLI with the extracted input data
     if True:
+        msp = get_microstructpy()
         msp.cli.run(phases=phases, domain=domain, **settings)
 
     if ec_dir is not None:

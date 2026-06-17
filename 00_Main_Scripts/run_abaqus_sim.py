@@ -1,6 +1,9 @@
-import os
+from wsl_windows_compat import run_abaqus_job
 
-# Run Abaqus Simulation 
+
+# Run Abaqus Simulation
+# On normal Windows/Linux this calls `abaqus` directly.  In WSL, if native
+# Abaqus is unavailable but Windows cmd.exe is exposed, the helper tries to
+# bridge to Windows with `cmd.exe /C abaqus`.
 def run_simulation(abaqus_simulation_directory, simulation_name):
-    os.chdir(abaqus_simulation_directory)
-    os.system(f"abaqus j={simulation_name} interactive")
+    run_abaqus_job(abaqus_simulation_directory, simulation_name)

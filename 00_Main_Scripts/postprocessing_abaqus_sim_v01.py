@@ -3,10 +3,10 @@ import csv
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from wsl_windows_compat import run_abaqus_cae_no_gui
 
 # Get Force vs Displacement from ODB
 def extract_force_displacement(abaqus_output_directory, simulation_name):
-    os.chdir(abaqus_output_directory)
     os.environ.update(
         {
             "ODB_FILE": simulation_name,
@@ -14,7 +14,8 @@ def extract_force_displacement(abaqus_output_directory, simulation_name):
             "UPPERNODES": "UPPERNODES",
         }
     )
-    os.system("abaqus cae noGUI=..\\..\\..\\00_Main_Scripts\\getForceDisp.py")
+    get_force_disp_script = os.path.join(os.path.dirname(__file__), "getForceDisp.py")
+    run_abaqus_cae_no_gui(abaqus_output_directory, get_force_disp_script)
 
     # Check if the csv file was written
     csv_path = os.path.join(os.path.dirname(abaqus_output_directory), simulation_name + ".csv")
@@ -40,7 +41,8 @@ def load_csv(file_path, strain_col=0, stress_col=1):
     return strain_vals, stress_vals
 
 def compute_area(strain, stress):
-    return np.trapezoid(stress, strain)
+    trapezoid = getattr(np, "trapezoid", np.trapz)
+    return trapezoid(stress, strain)
 
 def plot_simulation_against_rom(reference_csv, results_file, show_area=True, show_plot=True, save_fig=True):
     # Load AA7075-T6 reference (stress in col 1, strain in col 0)
