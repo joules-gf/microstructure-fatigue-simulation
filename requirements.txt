@@ -4,7 +4,10 @@
 # are provided by the Abaqus Python environment and should NOT be installed
 # with pip.
 
-numpy
+# MicroStructPy 1.5.9 is not compatible with NumPy 2.x when reading/writing
+# polymesh neighbor lists: NumPy scalar reprs like np.int64(2) leak into .poly
+# files and later fail int(...) parsing. Keep NumPy on the 1.x line.
+numpy<2
 pandas
 matplotlib
 microstructpy
