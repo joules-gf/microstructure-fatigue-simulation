@@ -153,8 +153,12 @@ def _copy_tree_contents(src: Path, dst: Path) -> None:
 
 
 def _cmd_arg(value: str) -> str:
-    # Quote a cmd.exe argument only when needed.
-    if any(char in value for char in " \t&()[]{}^=;!'+,`~"):
+    # Quote a cmd.exe argument only when needed. Keep option=value tokens
+    # unquoted because Abaqus parses quoted forms like "job=name" as
+    # option "job name".
+    if "=" in value:
+        return value
+    if any(char in value for char in " \t&()[]{}^;!'+,`~"):
         return _cmd_quote(value)
     return value
 
@@ -209,11 +213,12 @@ def run_cmd_abaqus_in_wsl_directory(
 
 
 def run_abaqus_job(abaqus_simulation_directory: str | os.PathLike[str], simulation_name: str) -> None:
-    """Run ``abaqus j=<simulation_name> interactive`` in a portable way."""
+    """Run ``abaqus job=<simulation_name> interactive`` in a portable way."""
     workdir = Path(abaqus_simulation_directory).resolve()
-    command = find_abaqus_command() + [f"j={simulation_name}", "interactive"]
+    abaqus_args = [f"job={simulation_name}", "interactive"]
+    command = find_abaqus_command() + abaqus_args
     if is_wsl() and _is_cmd_abaqus_bridge(command):
-        run_cmd_abaqus_in_wsl_directory([f"j={simulation_name}", "interactive"], workdir)
+        run_cmd_abaqus_in_wsl_directory(abaqus_args, workdir)
         return
     run_command(command, workdir)
 
