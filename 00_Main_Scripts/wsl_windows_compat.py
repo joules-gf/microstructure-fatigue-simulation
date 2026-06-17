@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Sequence
@@ -65,7 +66,7 @@ def find_abaqus_command() -> list[str]:
     """
     configured = os.environ.get("MICROSTRUCTURE_ABAQUS_CMD")
     if configured:
-        return configured.split()
+        return shlex.split(configured)
 
     if shutil.which("abaqus"):
         return ["abaqus"]
@@ -87,10 +88,59 @@ def run_command(command: Sequence[str], cwd: str | os.PathLike[str]) -> subproce
     return subprocess.run(command, cwd=str(cwd), check=True, text=True)
 
 
+def _is_cmd_abaqus_bridge(command: Sequence[str]) -> bool:
+    """Return True when Abaqus will be launched through Windows cmd.exe."""
+    lowered = [part.lower() for part in command]
+    return len(lowered) >= 3 and lowered[0].endswith("cmd.exe") and lowered[1] == "/c" and lowered[2] == "abaqus"
+
+
+def _windows_safe_cwd() -> str | None:
+    r"""Return a WSL path that resolves to a normal Windows drive path.
+
+    Windows cmd.exe cannot start with a WSL UNC path as its current directory
+    (for example ``\\wsl.localhost\Ubuntu\...``).  Starting cmd.exe from a
+    real Windows path avoids the "UNC paths are not supported" fallback.
+    """
+    for candidate in (Path("/mnt/c/Windows/Temp"), Path("/mnt/c/Users/Public")):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _cmd_quote(value: str) -> str:
+    """Quote a Windows cmd.exe argument."""
+    return '"' + value.replace('"', '\\"') + '"'
+
+
+def run_cmd_abaqus_in_wsl_directory(
+    abaqus_args: Sequence[str],
+    cwd: str | os.PathLike[str],
+) -> subprocess.CompletedProcess[str]:
+    r"""Run Windows Abaqus from WSL while using a WSL output directory.
+
+    ``cmd.exe`` cannot use a ``\\wsl.localhost\...`` UNC path as its initial
+    working directory.  ``pushd`` can temporarily map that UNC path to a Windows
+    drive letter, so Abaqus sees a normal working directory and can find the
+    generated ``.inp`` file by job name.
+    """
+    win_cwd = wsl_to_windows_path(cwd)
+    command_text = "pushd " + _cmd_quote(win_cwd) + " && abaqus " + " ".join(abaqus_args) + " && popd"
+    command = ["cmd.exe", "/C", command_text]
+    safe_cwd = _windows_safe_cwd()
+    print("Running:", " ".join(command))
+    print("Working directory:", cwd)
+    if safe_cwd:
+        print("cmd.exe launch directory:", safe_cwd)
+    return subprocess.run(command, cwd=safe_cwd, check=True, text=True)
+
+
 def run_abaqus_job(abaqus_simulation_directory: str | os.PathLike[str], simulation_name: str) -> None:
     """Run ``abaqus j=<simulation_name> interactive`` in a portable way."""
     workdir = Path(abaqus_simulation_directory).resolve()
     command = find_abaqus_command() + [f"j={simulation_name}", "interactive"]
+    if is_wsl() and _is_cmd_abaqus_bridge(command):
+        run_cmd_abaqus_in_wsl_directory([f"j={simulation_name}", "interactive"], workdir)
+        return
     run_command(command, workdir)
 
 
@@ -108,4 +158,7 @@ def run_abaqus_cae_no_gui(
         script_arg = str(script)
 
     command = find_abaqus_command() + ["cae", f"noGUI={script_arg}"]
+    if is_wsl() and _is_cmd_abaqus_bridge(command):
+        run_cmd_abaqus_in_wsl_directory(["cae", f"noGUI={script_arg}"], workdir)
+        return
     run_command(command, workdir)
