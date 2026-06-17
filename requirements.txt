@@ -1,0 +1,10 @@
+# Regular Python dependencies for non-Abaqus scripts.
+#
+# Abaqus-specific modules such as `abaqus`, `abaqusConstants`, and `odbAccess`
+# are provided by the Abaqus Python environment and should NOT be installed
+# with pip.
+
+numpy
+pandas
+matplotlib
+microstructpy

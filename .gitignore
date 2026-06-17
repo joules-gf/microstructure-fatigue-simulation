@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+
+# VS Code local workspace settings
+# If we later add shared recommended VS Code settings, we can track specific
+# files under .vscode/ with negation rules.
+.vscode/
+
+# Abaqus generated files
+*.odb
+*.dat
+*.msg
+*.sta
+*.sim
+*.prt
+*.com
+*.log
+*.lck
+*.rec
+*.rpy
+*.jnl
+*.pac
+*.sel
+*.stt
+*.mdl
+*.res
+*.abq
+*.023
+*.fil
+*.fin
+*.mtx
+*.odb_f
+*.ipm
+
+# Generated simulation outputs
+simulation_outputs/
+generated_outputs/
+outputs/
+results/
+runs/
+
+# Generated plots / explanatory images (not versioned initially)
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# Temporary/local files
+*.tmp
+*.bak
+*.swp
+*.swo
