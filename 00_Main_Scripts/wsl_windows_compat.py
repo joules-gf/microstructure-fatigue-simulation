@@ -39,6 +39,17 @@ def noninteractive_enabled() -> bool:
     return is_truthy(os.environ.get("MICROSTRUCTURE_NONINTERACTIVE"))
 
 
+def find_windows_cmd_exe() -> str | None:
+    """Return the WSL path to Windows cmd.exe, if available."""
+    cmd_exe = shutil.which("cmd.exe")
+    if cmd_exe:
+        return cmd_exe
+    fallback = Path("/mnt/c/Windows/System32/cmd.exe")
+    if fallback.exists():
+        return str(fallback)
+    return None
+
+
 def wsl_to_windows_path(path: str | os.PathLike[str]) -> str:
     """Convert a WSL path to a Windows path using wslpath when available."""
     path_str = str(Path(path).resolve())
@@ -71,8 +82,10 @@ def find_abaqus_command() -> list[str]:
     if shutil.which("abaqus"):
         return ["abaqus"]
 
-    if is_wsl() and shutil.which("cmd.exe"):
-        return ["cmd.exe", "/C", "abaqus"]
+    if is_wsl():
+        cmd_exe = find_windows_cmd_exe()
+        if cmd_exe:
+            return [cmd_exe, "/C", "abaqus"]
 
     raise AbaqusUnavailableError(
         "Abaqus was not found. Install/configure Abaqus, add it to PATH, or set "
@@ -152,7 +165,7 @@ def run_abaqus_cae_no_gui(
     workdir = Path(abaqus_output_directory).resolve()
     script = Path(script_path).resolve()
 
-    if is_wsl() and shutil.which("cmd.exe") and not shutil.which("abaqus"):
+    if is_wsl() and find_windows_cmd_exe() and not shutil.which("abaqus"):
         script_arg = wsl_to_windows_path(script)
     else:
         script_arg = str(script)

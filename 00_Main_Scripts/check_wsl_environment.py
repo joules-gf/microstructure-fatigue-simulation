@@ -18,7 +18,12 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from wsl_windows_compat import find_abaqus_command, is_wsl, AbaqusUnavailableError
+from wsl_windows_compat import (
+    AbaqusUnavailableError,
+    find_abaqus_command,
+    find_windows_cmd_exe,
+    is_wsl,
+)
 
 
 def check_import(module_name: str) -> bool:
@@ -36,7 +41,7 @@ def main() -> int:
     ok = True
     print(f"Python: {sys.executable}")
     print(f"WSL detected: {is_wsl()}")
-    print(f"cmd.exe visible: {bool(shutil.which('cmd.exe'))}")
+    print(f"cmd.exe visible: {bool(find_windows_cmd_exe())}")
     print(f"native abaqus visible: {bool(shutil.which('abaqus'))}")
     print()
 
