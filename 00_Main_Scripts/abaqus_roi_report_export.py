@@ -22,6 +22,7 @@ from __future__ import print_function
 import json
 import math
 import os
+import shutil
 
 
 DEFAULT_INSTANCE_NAME = "DOMAIN-1"
@@ -129,31 +130,44 @@ def choose_instance(odb, preferred_name=DEFAULT_INSTANCE_NAME):
     raise KeyError("Could not find instance %s. Available instances: %s" % (preferred_name, names))
 
 
-def available_roi_set_name(assembly, roi_name):
-    """Return an element-set name that can be safely created in this ODB.
-
-    Abaqus ODB element sets cannot be deleted once added.  That matters while
-    testing this script because an ODB can already contain stale ROI sets from an
-    older geometry rule.  For a fresh ODB we keep the readable name, e.g.
-    ``roi_left_05``.  If that name already exists, we create a clearly marked
-    replacement set, e.g. ``roi_left_05_current``.
-    """
+def existing_roi_set_names(assembly, roi_specs):
+    """Return ROI element sets that already exist in the ODB."""
     existing = assembly.elementSets.keys()
-    candidates = [roi_name, roi_name + "_current"]
-    for index in range(2, 100):
-        candidates.append(roi_name + "_current_%02d" % index)
+    found = []
+    for roi in roi_specs:
+        if roi.name in existing:
+            found.append(roi.name)
+        elif roi.name.upper() in existing:
+            found.append(roi.name.upper())
+    return found
 
-    for candidate in candidates:
-        if candidate not in existing and candidate.upper() not in existing:
-            if candidate != roi_name:
-                print("Existing ROI set %s cannot be deleted; creating %s instead." % (roi_name, candidate))
-            return candidate
-    raise RuntimeError("Could not find an available element-set name for %s" % roi_name)
+
+def require_no_existing_roi_sets(assembly, roi_specs):
+    """Fail early if this ODB already contains ROI sets.
+
+    Abaqus ODB element-set repositories do not support deleting sets once they
+    have been added.  I intentionally fail here instead of creating suffixes like
+    ``_current`` so the ODB only ever has the clean ROI names.
+
+    If this message appears, start from a clean ODB generated before ROI export
+    was run, or rerun the simulation to create a fresh ODB.
+    """
+    found = existing_roi_set_names(assembly, roi_specs)
+    if found:
+        raise RuntimeError(
+            "This ODB already contains ROI element sets and Abaqus does not "
+            "allow deleting them from the ODB repository. Existing sets: %s. "
+            "Please use a clean ODB generated before ROI export, or rerun the "
+            "simulation to create a fresh ODB."
+            % ", ".join(found)
+        )
 
 
 def create_roi_sets(odb, roi_specs, instance_name=DEFAULT_INSTANCE_NAME):
-    """Create ODB element sets for the requested ROIs and return their labels."""
+    """Create cleanly named ODB element sets for the requested ROIs."""
     assembly = odb.rootAssembly
+    require_no_existing_roi_sets(assembly, roi_specs)
+
     instance_name, instance = choose_instance(odb, instance_name)
     node_coordinates_by_label = dict((node.label, node.coordinates) for node in instance.nodes)
     labels_by_roi = group_element_labels_by_roi(instance.elements, roi_specs, node_coordinates_by_label)
@@ -163,12 +177,11 @@ def create_roi_sets(odb, roi_specs, instance_name=DEFAULT_INSTANCE_NAME):
         if not labels:
             print("Warning: ROI %s has no elements. Check domain size/radius/spacing." % roi_name)
             continue
-        actual_set_name = available_roi_set_name(assembly, roi_name)
         assembly.ElementSetFromElementLabels(
-            name=actual_set_name,
+            name=roi_name,
             elementLabels=((instance_name, tuple(labels)),),
         )
-        set_name_by_roi[roi_name] = actual_set_name
+        set_name_by_roi[roi_name] = roi_name
     odb.save()
     return set_name_by_roi
 
@@ -250,12 +263,44 @@ def find_odb_file(config):
     return os.path.abspath(odb_files[0])
 
 
+def clean_backup_path_for_odb(odb_path):
+    root, extension = os.path.splitext(odb_path)
+    return root + "_clean_before_roi" + extension
+
+
+def restore_clean_odb_if_available(odb_path, config):
+    """Restore the pre-ROI ODB backup so ROI sets are regenerated from scratch."""
+    if config.get("reset_from_clean_backup", True) is False:
+        return
+    backup_path = clean_backup_path_for_odb(odb_path)
+    if os.path.isfile(backup_path):
+        print("Restoring clean ODB before regenerating ROI sets: %s" % backup_path)
+        shutil.copyfile(backup_path, odb_path)
+
+
+def save_clean_odb_backup_if_missing(odb_path, config):
+    """Save a clean ODB copy before adding ROI sets for the first time."""
+    if config.get("save_clean_backup", True) is False:
+        return
+    backup_path = clean_backup_path_for_odb(odb_path)
+    if not os.path.isfile(backup_path):
+        print("Saving clean ODB backup before ROI sets are added: %s" % backup_path)
+        shutil.copyfile(odb_path, backup_path)
+
+
+
 def main():
     """Abaqus noGUI entry point."""
     from abaqus import session
 
     config = load_config()
     odb_path = find_odb_file(config)
+
+    # This is the clean replacement for the old ``_current`` suffix idea:
+    # keep a pre-ROI ODB backup, restore it before every ROI export, and then
+    # recreate the ROI sets with the same readable names.
+    restore_clean_odb_if_available(odb_path, config)
+
     odb = session.openOdb(name=odb_path, readOnly=False)
 
     instance_name = config.get("instance_name", DEFAULT_INSTANCE_NAME)
@@ -283,6 +328,14 @@ def main():
     if not frames:
         raise ValueError("roi_report_config.json must provide a non-empty 'frames' list.")
 
+    # Verify the ODB is clean before saving the backup.  If ROI sets already
+    # exist and no clean backup is available, Abaqus cannot delete them; rerun
+    # the simulation or provide a clean ODB.
+    require_no_existing_roi_sets(odb.rootAssembly, roi_specs)
+    odb.close()
+    save_clean_odb_backup_if_missing(odb_path, config)
+
+    odb = session.openOdb(name=odb_path, readOnly=False)
     output_folder = config.get("output_folder", "../roi_reports")
     set_name_by_roi = create_roi_sets(odb, roi_specs, instance_name=instance_name)
     export_roi_field_reports(odb, roi_specs, frames, output_folder=output_folder, set_name_by_roi=set_name_by_roi)
