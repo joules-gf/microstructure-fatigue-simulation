@@ -129,34 +129,68 @@ def choose_instance(odb, preferred_name=DEFAULT_INSTANCE_NAME):
     raise KeyError("Could not find instance %s. Available instances: %s" % (preferred_name, names))
 
 
+def available_roi_set_name(assembly, roi_name):
+    """Return an element-set name that can be safely created in this ODB.
+
+    Abaqus ODB element sets cannot be deleted once added.  That matters while
+    testing this script because an ODB can already contain stale ROI sets from an
+    older geometry rule.  For a fresh ODB we keep the readable name, e.g.
+    ``roi_left_05``.  If that name already exists, we create a clearly marked
+    replacement set, e.g. ``roi_left_05_current``.
+    """
+    existing = assembly.elementSets.keys()
+    candidates = [roi_name, roi_name + "_current"]
+    for index in range(2, 100):
+        candidates.append(roi_name + "_current_%02d" % index)
+
+    for candidate in candidates:
+        if candidate not in existing and candidate.upper() not in existing:
+            if candidate != roi_name:
+                print("Existing ROI set %s cannot be deleted; creating %s instead." % (roi_name, candidate))
+            return candidate
+    raise RuntimeError("Could not find an available element-set name for %s" % roi_name)
+
+
 def create_roi_sets(odb, roi_specs, instance_name=DEFAULT_INSTANCE_NAME):
     """Create ODB element sets for the requested ROIs and return their labels."""
     assembly = odb.rootAssembly
     instance_name, instance = choose_instance(odb, instance_name)
     node_coordinates_by_label = dict((node.label, node.coordinates) for node in instance.nodes)
     labels_by_roi = group_element_labels_by_roi(instance.elements, roi_specs, node_coordinates_by_label)
+    set_name_by_roi = {}
 
     for roi_name, labels in labels_by_roi.items():
         if not labels:
             print("Warning: ROI %s has no elements. Check domain size/radius/spacing." % roi_name)
             continue
-        existing_set_names = assembly.elementSets.keys()
-        if roi_name in existing_set_names or roi_name.upper() in existing_set_names:
-            continue
+        actual_set_name = available_roi_set_name(assembly, roi_name)
         assembly.ElementSetFromElementLabels(
-            name=roi_name,
+            name=actual_set_name,
             elementLabels=((instance_name, tuple(labels)),),
         )
+        set_name_by_roi[roi_name] = actual_set_name
     odb.save()
-    return labels_by_roi
+    return set_name_by_roi
 
 
-def export_roi_field_reports(odb, roi_specs, frames, output_folder="."):
+def resolve_element_set_name(assembly, requested_name):
+    """Find the ODB repository key for an element set name."""
+    if requested_name in assembly.elementSets.keys():
+        return requested_name
+    upper_name = requested_name.upper()
+    if upper_name in assembly.elementSets.keys():
+        return upper_name
+    return None
+
+def export_roi_field_reports(odb, roi_specs, frames, output_folder=".", set_name_by_roi=None):
     """Export E22/S22 field reports for each ROI at the selected frames."""
     import visualization
     from abaqus import session
     from abaqusConstants import COMMA_SEPARATED_VALUES, COMPONENT, INTEGRATION_POINT, OFF, SPECIFY
     import displayGroupOdbToolset as dgo
+
+    if set_name_by_roi is None:
+        set_name_by_roi = {}
 
     if not os.path.isdir(output_folder):
         os.makedirs(output_folder)
@@ -178,10 +212,9 @@ def export_roi_field_reports(odb, roi_specs, frames, output_folder="."):
 
     for frame_number in frames:
         for roi in roi_specs:
-            element_set_name = roi.name.upper()
-            if element_set_name not in odb.rootAssembly.elementSets.keys() and roi.name in odb.rootAssembly.elementSets.keys():
-                element_set_name = roi.name
-            if element_set_name not in odb.rootAssembly.elementSets.keys():
+            requested_set_name = set_name_by_roi.get(roi.name, roi.name)
+            element_set_name = resolve_element_set_name(odb.rootAssembly, requested_set_name)
+            if element_set_name is None:
                 print("Skipping %s because no element set was created." % roi.name)
                 continue
             leaf = dgo.LeafFromElementSets(elementSets=(element_set_name,))
@@ -251,8 +284,8 @@ def main():
         raise ValueError("roi_report_config.json must provide a non-empty 'frames' list.")
 
     output_folder = config.get("output_folder", "../roi_reports")
-    create_roi_sets(odb, roi_specs, instance_name=instance_name)
-    export_roi_field_reports(odb, roi_specs, frames, output_folder=output_folder)
+    set_name_by_roi = create_roi_sets(odb, roi_specs, instance_name=instance_name)
+    export_roi_field_reports(odb, roi_specs, frames, output_folder=output_folder, set_name_by_roi=set_name_by_roi)
     odb.close()
 
 
